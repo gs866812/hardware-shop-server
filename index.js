@@ -4,17 +4,19 @@ const bodyParser = require("body-parser");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin:['http://localhost:5173']
+}));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-const port = process.env.PORT || 4000;
+const port = process.env.PORT || 9000;
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
-// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@graphicsaction.dpne6.mongodb.net/?retryWrites=true&w=majority&appName=Graphicsaction`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@graphicsaction.dpne6.mongodb.net/?retryWrites=true&w=majority&appName=Graphicsaction`;
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@hardwarestore.bbhhx17.mongodb.net/?retryWrites=true&w=majority&appName=hardwareStore`;
+// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@hardwarestore.bbhhx17.mongodb.net/?retryWrites=true&w=majority&appName=hardwareStore`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -30,7 +32,7 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    await client.connect();
+   
     const database = client.db("hardwareShop");
     const categoryCollections = database.collection("categoryList");
     const brandCollections = database.collection("brandList");
@@ -46,6 +48,9 @@ async function run() {
     const tempSalesProductCollections = database.collection(
       "tempSalesProductList"
     );
+    const tempQuotationProductCollections = database.collection(
+      "tempQuotationProductList"
+    );
     const stockCollections = database.collection("stockList");
     const purchaseInvoiceCollections = database.collection(
       "purchaseInvoiceList"
@@ -53,11 +58,19 @@ async function run() {
     const salesInvoiceCollections = database.collection(
       "salesInvoiceList"
     );
+    const quotationCollections = database.collection(
+      "quotationList"
+    );
     const customerCollections = database.collection("customerList");
     const supplierDueCollections = database.collection("supplierDueList");
     const customerDueCollections = database.collection("customerDueList");
+    const profitCollections = database.collection("profitList");
+    const supplierDueBalanceCollections = database.collection("supplierDueBalanceList");
+    const customerDueBalanceCollections = database.collection("customerDueBalanceList");
+    
 
-    // add product
+    
+    // add product.............................................................
     app.post("/addProducts", async (req, res) => {
       const { product, categoryName, brandName, unitName } = req.body;
       const productName = product;
@@ -103,12 +116,37 @@ async function run() {
 
     // show products
     app.get("/products", async (req, res) => {
+      const page = parseInt(req.query.page);
+		  const size = parseInt(req.query.size);
+      const search = req.query.search || '';
       // const products = await productCollections.find().toArray();
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      };
+
+      const query = search
+    ? {
+        $or: [
+          { productName: { $regex: new RegExp(search, 'i') } },
+          { productCode: numericSearch ? numericSearch : { $exists: false } },
+          { categoryName: { $regex: new RegExp(search, 'i') } },
+          { brandName: { $regex: new RegExp(search, 'i') } },
+          { unitName: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
+
       const products = await productCollections
-        .find()
+        .find(query)
+        .skip((page - 1) * size)
+        .limit(size)
         .sort({ _id: -1 })
         .toArray();
-      res.send(products);
+
+        const count = await productCollections.countDocuments(query);
+      res.send({products, count});
     });
 
     // update product
@@ -285,11 +323,37 @@ async function run() {
 
     // show supplier
     app.get("/suppliers", async (req, res) => {
+      const page = parseInt(req.query.page);
+		  const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { supplierName: { $regex: new RegExp(search, 'i') } },
+          { serial: numericSearch ? numericSearch : { $exists: false } },
+          { contactPerson: { $regex: new RegExp(search, 'i') } },
+          { contactNumber: { $regex: new RegExp(search, 'i') } },
+          { supplierAddress: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
+
       const result = await supplierCollections
-        .find()
+        .find(query)
+        .skip((page - 1) * size)
+        .limit(size)
         .sort({ _id: -1 })
         .toArray();
-      res.send(result);
+
+        const count = await supplierCollections.countDocuments(query);
+      res.send({result, count});
     });
 
     // update supplier
@@ -328,7 +392,7 @@ async function run() {
 
     // add total balance
     app.post("/addBalance", async (req, res) => {
-      const { note, date, type } = req.body;
+      const { note, date, type, userName } = req.body;
       const parseAmount = parseFloat(req.body.confirmAmount);
       const newBalance = parseFloat(parseAmount.toFixed(2));
 
@@ -364,6 +428,7 @@ async function run() {
         note,
         date,
         type,
+        userName
       });
 
       res.send(result);
@@ -371,24 +436,23 @@ async function run() {
 
     // costing balance
     app.post("/costingBalance", async (req, res) => {
-      const { note, date, type } = req.body;
+      const { note, date, type, userName } = req.body;
       const parseAmount = parseFloat(req.body.confirmCostAmount);
       const newCostingBalance = parseFloat(parseAmount.toFixed(2));
 
-      // find main balance to update/deduct
-      const existingBalanceDoc = await mainBalanceCollections.findOne();
-      if (existingBalanceDoc.mainBalance >= newCostingBalance) {
-        // Update balance by deducting new costingBalance
-        const updatedMainBalance =
-          existingBalanceDoc.mainBalance - newCostingBalance;
+      // find balance to update/deduct
+      const existingBalance = await mainBalanceCollections.findOne({});
+      if(existingBalance.mainBalance >= newCostingBalance){
         await mainBalanceCollections.updateOne(
           {},
-          { $set: { mainBalance: updatedMainBalance } }
+          { 
+            $inc: { mainBalance: - newCostingBalance } 
+          }
         );
-      } else {
-        // await mainBalanceCollections.insertOne({ mainBalance: newCostingBalance });
-        return res.json("Insufficient balance");
+      }else{
+         return res.json('Insufficient balance');
       }
+      
 
       const existingCostingBalanceDoc =
         await costingBalanceCollections.findOne();
@@ -405,7 +469,10 @@ async function run() {
         await costingBalanceCollections.insertOne({
           costingBalance: newCostingBalance,
         });
-      }
+      };
+
+      
+      
 
       //add transaction list with serial
       const recentSerialTransaction = await transactionCollections
@@ -425,6 +492,7 @@ async function run() {
         note,
         date,
         type,
+        userName
       });
 
       res.send(result);
@@ -444,16 +512,39 @@ async function run() {
 
     // show all transactions list............................................
     app.get("/allTransactions", async (req, res) => {
-      const serial = 10;
+
       const page = parseInt(req.query.page);
       const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { note: { $regex: new RegExp(search, 'i') } },
+          { serial: numericSearch ? numericSearch : { $exists: false } },
+          { totalBalance: numericSearch ? numericSearch : { $exists: false } },
+          { date: { $regex: new RegExp(search, 'i') } },
+          { type: { $regex: new RegExp(search, 'i') } },
+          { userName: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
       const result = await transactionCollections
-        .find()
+        .find(query)
         .skip((page - 1) * size)
         .limit(size)
         .sort({_id: -1 })
         .toArray();
-      res.send(result);
+
+        const count = await transactionCollections.countDocuments(query);
+
+      res.send({result, count});
     });
 
  
@@ -464,6 +555,17 @@ async function run() {
       res.send({ count });
     });
 
+    // .....................................................................................
+
+    app.get("/stockCount", async (req, res) => {
+      const count = await stockCollections.estimatedDocumentCount();
+      res.send({ count });
+    });
+    // .....................................................................................
+    app.get("/customerCount", async (req, res) => {
+      const count = await customerCollections.estimatedDocumentCount();
+      res.send({ count });
+    });
     // .....................................................................................
     app.post('/getSalesPrice/:id', async (req, res) => {
       const productID = req.params.id;
@@ -485,6 +587,7 @@ async function run() {
         salesQuantity,
         salesUnit,
         salesPrice,
+        purchasePrice,
         category,
       } = req.body;
 
@@ -496,6 +599,33 @@ async function run() {
         salesQuantity,
         salesUnit,
         salesPrice,
+        purchasePrice,
+        category
+      });
+      res.send(result);
+    });
+    //set temp quotation product list
+    app.post("/adTempQuotationProductList", async (req, res) => {
+      const {
+        productID,
+        productTitle,
+        brand,
+        salesQuantity,
+        salesUnit,
+        salesPrice,
+        purchasePrice,
+        category,
+      } = req.body;
+
+
+      const result = await tempQuotationProductCollections.insertOne({
+        productID,
+        productTitle,
+        brand,
+        salesQuantity,
+        salesUnit,
+        salesPrice,
+        purchasePrice,
         category
       });
       res.send(result);
@@ -504,6 +634,12 @@ async function run() {
     //get temp sales product list..........................................
     app.get("/tempSalesProductList", async (req, res) => {
       const result = await tempSalesProductCollections.find().toArray();
+      res.send(result);
+    });
+
+    //get temp quotation product list..........................................
+    app.get("/tempQuotationProductList", async (req, res) => {
+      const result = await tempQuotationProductCollections.find().toArray();
       res.send(result);
     });
     // .....................................................................................
@@ -566,6 +702,14 @@ async function run() {
       res.send(result);
     });
 
+    // delete temp product from sales
+    app.delete("/deleteQuotationTempProduct/:id", async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await tempQuotationProductCollections.deleteOne(query);
+      res.send(result);
+    });
+
     // new sales invoice...........................................
     app.post("/newSalesInvoice", async (req, res) => {
       const {
@@ -577,8 +721,11 @@ async function run() {
         grandTotal,
         finalPayAmount,
         dueAmount,
+        profit,
+        userName
       } = req.body;
-      console.log(customerSerial);
+      
+
     
       // Retrieve product list from temporary collection
       const productList = await tempSalesProductCollections.find().toArray();
@@ -622,9 +769,39 @@ async function run() {
         grandTotal,
         finalPayAmount,
         dueAmount,
+        userName,
         productList: filteredProductList,
         invoiceNumber: nextInvoiceNumber,
       });
+
+      const customerDue = await customerDueBalanceCollections.findOne({});
+      if(customerDue){
+        await customerDueBalanceCollections.updateOne(
+          {},
+          {
+            $inc: {
+              customerDueBalance: dueAmount,
+            },
+          }
+        )
+      }else{
+        await customerDueBalanceCollections.insertOne({customerDueBalance: dueAmount});
+      }
+
+      const existingProfit = await profitCollections.findOne({});
+      if(existingProfit){
+        await profitCollections.updateOne(
+          {},
+          {
+            $inc:{
+                profitBalance: profit,
+            },
+          }
+        )
+      }else{
+        await profitCollections.insertOne({ profitBalance: profit});
+      }
+      
     
       // Find customer by serial
       const findCustomerBySerial = await customerDueCollections.findOne({ customerSerial });
@@ -644,6 +821,7 @@ async function run() {
                 grandTotal,
                 finalPayAmount,
                 dueAmount,
+                userName
               },
             },
           }
@@ -657,7 +835,7 @@ async function run() {
           customerName,
           dueAmount,
           salesHistory: [
-            { date, invoiceNumber: nextInvoiceNumber, grandTotal, finalPayAmount, dueAmount },
+            { date, invoiceNumber: nextInvoiceNumber, grandTotal, finalPayAmount, dueAmount, userName },
           ],
           paymentHistory: [],
         });
@@ -701,11 +879,51 @@ async function run() {
         totalBalance: finalPayAmount,
         note: `Sales ref, ${nextInvoiceNumber}`,
         date,
-        type: "In",
+        type: "Sales",
+        userName
       });
     
       // Now delete the temporary product list
       await tempSalesProductCollections.deleteMany({});
+      res.send(result);
+    });
+
+    // new quotation invoice...........................................
+    app.post("/newQuotation", async (req, res) => {
+      const {
+        userName,
+        customerSerial,
+        contactNumber,
+        date,
+        customerName,
+        totalAmount,
+        discountAmount,
+        grandTotal,
+      } = req.body;
+      
+
+    
+      // Retrieve product list from temporary collection
+      const productList = await tempQuotationProductCollections.find().toArray();
+      const filteredProductList = productList.map(({ _id, ...rest }) => rest);
+    
+    
+      // Insert the new sales invoice
+      const result = await quotationCollections.insertOne({
+        userName,
+        customerSerial,
+        contactNumber,
+        date,
+        customerName,
+        totalAmount,
+        discountAmount,
+        grandTotal,
+        productList: filteredProductList,
+      });
+    
+    
+      // Now delete the temporary product list
+      await tempQuotationProductCollections.deleteMany({});
       res.send(result);
     });
     
@@ -719,10 +937,26 @@ async function run() {
       res.send(result);
     });
 
+    // get quotation list
+    app.get("/quotationInvoice", async (req, res) => {
+      const result = await quotationCollections
+        .find()
+        .sort({ _id: -1 })
+        .toArray();
+      res.send(result);
+    });
+
 
     // show customer Ledger start .............................................
     app.get('/customerLedger', async (req, res) => {
-      const result = await customerDueCollections.find().sort({ _id: -1 }).toArray();
+      const page = parseInt(req.query.page);
+		  const size = parseInt(req.query.size);
+      const result = await customerDueCollections
+      .find()
+      .skip((page - 1) * size)
+      .limit(size)
+      .sort({ _id: -1 })
+      .toArray();
       res.send(result);
     });
     // show customer Ledger end .............................................
@@ -731,6 +965,7 @@ async function run() {
     // new purchase invoice...........................................
     app.post("/newPurchaseInvoice", async (req, res) => {
       const {
+        userName,
         supplierSerial,
         date,
         supplierName,
@@ -740,7 +975,7 @@ async function run() {
         finalPayAmount,
         dueAmount,
       } = req.body;
-      console.log(supplierSerial);
+  
       const productList = await tempPurchaseProductCollections.find().toArray();
       const filteredProductList = productList.map(({ _id, ...rest }) => rest);
       // Define the initial invoice number
@@ -758,6 +993,7 @@ async function run() {
         : firstInvoiceNumber;
 
       const result = await purchaseInvoiceCollections.insertOne({
+        userName,
         supplierSerial,
         date,
         supplierName,
@@ -769,6 +1005,20 @@ async function run() {
         productList: filteredProductList,
         invoiceNumber: nextInvoiceNumber,
       });
+
+      const supplierDue = await supplierDueBalanceCollections.findOne({});
+      if(supplierDue){
+        await supplierDueBalanceCollections.updateOne(
+          {},
+          {
+            $inc: {
+              supplierDueBalance: dueAmount,
+            },
+          }
+        )
+      }else{
+        await supplierDueBalanceCollections.insertOne({supplierDueBalance: dueAmount});
+      }
 
       const findSupplierBySerial = await supplierDueCollections.findOne({ supplierSerial});
       const findSupplier = await supplierCollections.findOne({ serial: supplierSerial});
@@ -787,7 +1037,8 @@ async function run() {
                 invoiceNumber: nextInvoiceNumber,
                 grandTotal,
                 finalPayAmount,
-                dueAmount
+                dueAmount,
+                userName
               }
             }
           }
@@ -802,7 +1053,7 @@ async function run() {
           supplierName,
           dueAmount,
           purchaseHistory: [
-            { date, invoiceNumber: nextInvoiceNumber, grandTotal, finalPayAmount, dueAmount }
+            { date, invoiceNumber: nextInvoiceNumber, grandTotal, finalPayAmount, dueAmount, userName }
           ],
           paymentHistory: [],
         });
@@ -856,7 +1107,8 @@ async function run() {
         totalBalance: finalPayAmount,
         note: `Purchase ref, ${nextInvoiceNumber}`,
         date,
-        type: "Out",
+        type: "Purchase",
+        userName
       });
 
       // now delete the temporary product list
@@ -866,7 +1118,14 @@ async function run() {
 
     // show supplier Ledger start .............................................
     app.get('/supplierLedger', async (req, res) => {
-      const result = await supplierDueCollections.find().sort({ _id: -1 }).toArray();
+      const page = parseInt(req.query.page);
+		  const size = parseInt(req.query.size);
+      const result = await supplierDueCollections
+      .find()
+      .skip((page - 1) * size)
+      .limit(size)
+      .sort({ supplierSerial: -1 })
+      .toArray();
       res.send(result);
     });
     // show supplier Ledger end .............................................
@@ -875,6 +1134,11 @@ async function run() {
     app.get('/singleSupplier/:id', async (req, res) => {
       const id = parseInt(req.params.id);
       const result = await supplierDueCollections.findOne({supplierSerial:id}); 
+
+      if (result && result.purchaseHistory) {
+        result.purchaseHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+      }
+
       res.send(result);
     });
     // single supplier ledger end ...............................................
@@ -883,6 +1147,11 @@ async function run() {
     app.get('/singleCustomer/:id', async (req, res) => {
       const id = parseInt(req.params.id);
       const result = await customerDueCollections.findOne({customerSerial:id}); 
+
+      if (result && result.salesHistory) {
+        result.salesHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+      }
+
       res.send(result);
     });
     // single customer ledger end ...............................................
@@ -890,9 +1159,55 @@ async function run() {
     // supplier payment start .................................................
     app.post('/paySupplier/:id', async (req, res) => {
       const id = parseInt(req.params.id);
-      const {date, paidAmount, paymentMethod, payNote} = req.body;
-      const supplier = await supplierDueCollections.findOne({supplierSerial:id});
+      const {date, paidAmount, paymentMethod, payNote, userName} = req.body;
 
+      const existingBalance = await mainBalanceCollections.findOne();
+      if(existingBalance.mainBalance > paidAmount){
+        await mainBalanceCollections.updateOne(
+          {},
+          { $inc: { mainBalance: - paidAmount } }
+        );
+      }else{
+        return res.json('Insufficient balance');
+      }
+
+      const supplierDue = await supplierDueBalanceCollections.findOne({});
+      if(supplierDue){
+        await supplierDueBalanceCollections.updateOne(
+          {},
+          {
+            $inc: {
+              supplierDueBalance: - paidAmount,
+            },
+          }
+        )
+      }
+      
+
+      //add transaction list with serial
+      const findSupplier = await supplierCollections.findOne({serial: id});
+      const recentSerialTransaction = await transactionCollections
+      .find()
+      .sort({ serial: -1 })
+      .limit(1)
+      .toArray();
+  
+    let nextSerial = 10; // Default starting serial number
+    if (recentSerialTransaction.length > 0 && recentSerialTransaction[0].serial) {
+      nextSerial = recentSerialTransaction[0].serial + 1;
+    }
+
+      await transactionCollections.insertOne({
+        serial: nextSerial,
+        totalBalance: paidAmount,
+        note: `Paid to ${findSupplier.supplierName}`,
+        date,
+        type: "Paid",
+        userName
+      });
+
+
+      const supplier = await supplierDueCollections.findOne({supplierSerial:id});
 
       if(supplier) {
         const updatedDueAmount = supplier.dueAmount - paidAmount;
@@ -910,19 +1225,25 @@ async function run() {
             }
           }
         );
+
+      // const duaPaid = await supplierDueCollections.findOne({supplierSerial:id});
+      // if(duaPaid.dueAmount <= 0){
+      //   await supplierDueCollections.deleteOne({dueAmount: 0});
+      // }
         res.json('success');
       } 
 
     })
     // supplier payment end .................................................
 
-    // supplier payment start .................................................
+    // customer payment start .................................................
     app.post('/payCustomer/:id', async (req, res) => {
       const id = parseInt(req.params.id);
-      const {date, paidAmount, paymentMethod, payNote} = req.body;
+      const {date, paidAmount, paymentMethod, payNote, userName} = req.body;
+
+      
+
       const customer = await customerDueCollections.findOne({customerSerial:id});
-
-
       if(customer) {
         const updatedDueAmount = customer.dueAmount - paidAmount;
         await customerDueCollections.updateOne(
@@ -939,11 +1260,63 @@ async function run() {
             }
           }
         );
+
+        const existingBalance = await mainBalanceCollections.findOne();
+      if(existingBalance){
+        await mainBalanceCollections.updateOne(
+          {},
+          { $inc: { mainBalance: paidAmount } }
+        );
+
+        const customerDue = await customerDueBalanceCollections.findOne({});
+      if(customerDue){
+        await customerDueBalanceCollections.updateOne(
+          {},
+          {
+            $inc: {
+              customerDueBalance: - paidAmount,
+            },
+          }
+        )
+      }
+
+      //add transaction list with serial
+      const findCustomer = await customerCollections.findOne({serial: id});
+      const recentSerialTransaction = await transactionCollections
+      .find()
+      .sort({ serial: -1 })
+      .limit(1)
+      .toArray();
+  
+    let nextSerial = 10; // Default starting serial number
+    if (recentSerialTransaction.length > 0 && recentSerialTransaction[0].serial) {
+      nextSerial = recentSerialTransaction[0].serial + 1;
+    }
+
+      await transactionCollections.insertOne({
+        serial: nextSerial,
+        totalBalance: paidAmount,
+        note: `Received from ${findCustomer.customerName}`,
+        date,
+        type: "Received",
+        userName
+      });
+
+      }
+
+      // const duaPaid = await customerDueCollections.findOne({customerSerial:id});
+      // if(duaPaid.dueAmount <= 0){
+      //   await customerDueCollections.deleteOne({dueAmount: 0});
+      // }
+
+
         res.json('success');
       } 
 
+      
+
     })
-    // supplier payment end .................................................
+    // customer payment end .................................................
 
     // get invoice list
     app.get("/invoices", async (req, res) => {
@@ -956,8 +1329,34 @@ async function run() {
 
     // get current stock balance
     app.get("/stockBalance", async (req, res) => {
-      const result = await stockCollections.find().sort({ _id: -1 }).toArray();
-      res.send(result);
+      const page = parseInt(req.query.page);
+      const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { productID: { $regex: new RegExp(search, 'i') } },
+          { purchaseQuantity: numericSearch ? numericSearch : { $exists: false } },
+          { salesPrice: numericSearch ? numericSearch : { $exists: false } },
+          { productTitle: { $regex: new RegExp(search, 'i') } },
+          { purchaseUnit: { $regex: new RegExp(search, 'i') } },
+          { category: { $regex: new RegExp(search, 'i') } },
+          { brand: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
+
+      const result = await stockCollections.find(query).skip((page-1)  * size).limit(size).sort({ _id: -1 }).toArray();
+
+      const count = await stockCollections.countDocuments(query);
+      res.send({result, count});
     });
 
     // add customer.....................................
@@ -992,11 +1391,36 @@ async function run() {
 
     // show customer...................................
     app.get("/customers", async (req, res) => {
+      const page = parseInt(req.query.page);
+      const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      };
+
+      const query = search
+      ? {
+          $or: [
+            { 
+              customerName: { $regex: new RegExp(search, 'i') } },
+            { serial: numericSearch ? numericSearch : { $exists: false } },
+            { contactNumber: { $regex: new RegExp(search, 'i') } },
+            { customerAddress: { $regex: new RegExp(search, 'i') } }
+          ]
+        }
+      : {};
+
       const result = await customerCollections
-        .find()
+        .find(query)
+        .skip((page - 1) * size)
+        .limit(size)
         .sort({ _id: -1 })
         .toArray();
-      res.send(result);
+
+        const count = await customerCollections.countDocuments(query);
+      res.send({result, count});
     });
 
     // update customer
@@ -1026,9 +1450,60 @@ async function run() {
       res.send(result);
     });
 
+// get profit balance
+app.get('/profitBalance', async(req, res) => {
+  const result = await profitCollections.find().toArray();
+  res.send(result);
+});
 
+// get supplier due balance
 
-// ..................................................................................................................................
+app.get('/supplierTotalDueBalance', async(req, res) =>{
+  const result = await supplierDueBalanceCollections.find().toArray();
+  res.send(result);
+});
+app.get('/customerTotalDueBalance', async(req, res) =>{
+  const result = await customerDueBalanceCollections.find().toArray();
+  res.send(result);
+});
+
+// .....................................................................................
+app.get("/productTotalCount", async (req, res) => {
+  const count = await productCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+
+// .....................................................................................
+app.get("/supplierTotalCount", async (req, res) => {
+  const count = await supplierCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+
+// single supplier total count
+app.get("/singleSupplierCount", async (req, res) => {
+  const count = await supplierDueCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+
+// single customer total count
+app.get("/singleCustomerCount", async (req, res) => {
+  const count = await customerDueCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+
+// Total sales invoice count
+app.get("/salesInvoiceCount", async (req, res) => {
+  const count = await salesInvoiceCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+
+// Total sales invoice count
+app.get("/purchaseInvoiceCount", async (req, res) => {
+  const count = await purchaseInvoiceCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+
+// .................................................................................................................
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
