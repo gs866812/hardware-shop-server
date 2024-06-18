@@ -1,14 +1,19 @@
 const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
+const jwt = require("jsonwebtoken");
+const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
 const app = express();
 app.use(cors({
-  origin:['http://localhost:5173']
+  origin:['http://localhost:5173'],
+  credentials: true,
 }));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
+app.use(cookieParser());
+app.use(express.json());
 
 const port = process.env.PORT || 9000;
 
@@ -29,6 +34,22 @@ const client = new MongoClient(uri, {
 app.get("/", (req, res) => {
   res.send("Hello World!");
 });
+
+// jwt
+const verifyToken = async(req, res, next) => {
+  const token = req.cookies?.token;
+  if(!token){
+    return res.status(401).send({message: 'Not authorized'});
+  }
+
+  jwt.verify(token, process.env.TOKEN_SECRET, (err, decoded) => {
+    if(err){
+      return res.status(401).send({message: 'Unauthorized'});
+    }
+    req.user = decoded;
+    next();
+  })
+};
 
 async function run() {
   try {
@@ -69,6 +90,24 @@ async function run() {
     const customerDueBalanceCollections = database.collection("customerDueBalanceList");
     
 
+
+    // jwt 
+    app.post('/jwt', async (req, res) => {
+      const user = req.body;
+      const token = jwt.sign(user, process.env.TOKEN_SECRET, {expiresIn: '1hr'});
+      res
+      .cookie('token', token, {
+        httpOnly: true, 
+        secure: true,
+        sameSite: 'none',
+      })
+      .send({success: true});
+    });
+
+    app.post('/logOut', async(req, res) => {
+      const user = req.body;
+      res.clearCookie('token', {maxAge: 0}).send({success: true});
+    });
     
     // add product.............................................................
     app.post("/addProducts", async (req, res) => {
@@ -119,6 +158,7 @@ async function run() {
       const page = parseInt(req.query.page);
 		  const size = parseInt(req.query.size);
       const search = req.query.search || '';
+
       // const products = await productCollections.find().toArray();
       let numericSearch = parseFloat(search);
       if (isNaN(numericSearch)) {
@@ -929,21 +969,84 @@ async function run() {
     
 
     // get sales invoice list
-    app.get("/salesInvoices", async (req, res) => {
+    app.get("/salesInvoices", verifyToken, async (req, res) => {
+      const page = parseInt(req.query.page);
+		  const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      const userMail = req.query['userEmail'];
+      const email = req.user['email'];
+
+      if(userMail !== email) {
+        return res.status(401).send({ message: 'Forbidden Access' });
+      }
+
+
+
+     
+
+
+      
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      };
+
+      const query = search
+    ? {
+        $or: [
+          { date: { $regex: new RegExp(search, 'i') } },
+          { grandTotal: numericSearch ? numericSearch : { $exists: false } },
+          { invoiceNumber: numericSearch ? numericSearch : { $exists: false } },
+          { customerName: { $regex: new RegExp(search, 'i') } },
+          { userName: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
       const result = await salesInvoiceCollections
-        .find()
+        .find(query)
+        .skip((page - 1) * size)
+        .limit(size)
         .sort({ _id: -1 })
         .toArray();
-      res.send(result);
+        const count = await salesInvoiceCollections.countDocuments(query);
+      res.send({result, count});
     });
 
     // get quotation list
     app.get("/quotationInvoice", async (req, res) => {
+      const page = parseInt(req.query.page);
+      const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { date: { $regex: new RegExp(search, 'i') } },
+          { grandTotal: numericSearch ? numericSearch : { $exists: false } },
+          { customerName: { $regex: new RegExp(search, 'i') } },
+          { contactNumber: { $regex: new RegExp(search, 'i') } },
+          { userName: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
+
       const result = await quotationCollections
-        .find()
+        .find(query)
+        .skip((page - 1) * size)
+        .limit(size)
         .sort({ _id: -1 })
         .toArray();
-      res.send(result);
+        const count = await quotationCollections.countDocuments(query);
+        res.send({result, count});
     });
 
 
@@ -951,13 +1054,32 @@ async function run() {
     app.get('/customerLedger', async (req, res) => {
       const page = parseInt(req.query.page);
 		  const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { customerName: { $regex: new RegExp(search, 'i') } },
+          { customerSerial: numericSearch ? numericSearch : { $exists: false } },
+          { customerAddress: { $regex: new RegExp(search, 'i') } },
+          { contactNumber: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
       const result = await customerDueCollections
-      .find()
+      .find(query)
       .skip((page - 1) * size)
       .limit(size)
       .sort({ _id: -1 })
       .toArray();
-      res.send(result);
+      const count = await customerDueCollections.countDocuments(query);
+	res.send({result, count});
     });
     // show customer Ledger end .............................................
     
@@ -1120,40 +1242,150 @@ async function run() {
     app.get('/supplierLedger', async (req, res) => {
       const page = parseInt(req.query.page);
 		  const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { supplierName: { $regex: new RegExp(search, 'i') } },
+          { supplierSerial: numericSearch ? numericSearch : { $exists: false } },
+          { supplierAddress: { $regex: new RegExp(search, 'i') } },
+          { contactPerson: { $regex: new RegExp(search, 'i') } },
+          { contactNumber: { $regex: new RegExp(search, 'i') } },
+        ]
+      }
+    : {};
+
+
+
       const result = await supplierDueCollections
-      .find()
+      .find(query)
       .skip((page - 1) * size)
       .limit(size)
       .sort({ supplierSerial: -1 })
       .toArray();
-      res.send(result);
+      const count = await supplierDueCollections.countDocuments(query);
+	res.send({result, count});
     });
     // show supplier Ledger end .............................................
 
-    // single supplier ledger start ...............................................
+    // original single supplier ledger start ...............................................
+
+    // app.get('/singleSupplier/:id', async (req, res) => {
+    //   const id = parseInt(req.params.id);
+    //   const result = await supplierDueCollections.findOne({supplierSerial:id}); 
+
+    //   if (result && result.purchaseHistory) {
+    //     result.purchaseHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+    //   }
+
+    //   res.send(result);
+    // });
+    // original single supplier ledger end ...............................................
+
+    // GPT start single supplier
     app.get('/singleSupplier/:id', async (req, res) => {
       const id = parseInt(req.params.id);
-      const result = await supplierDueCollections.findOne({supplierSerial:id}); 
-
-      if (result && result.purchaseHistory) {
-        result.purchaseHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+      const { searchTerm, page = 1, limit = 10 } = req.query; // Get search term, page, and limit from query parameters
+    
+      const supplier = await supplierDueCollections.findOne({ supplierSerial: id });
+    
+      if (!supplier) {
+        return res.status(404).send({ message: 'Supplier not found' });
       }
-
-      res.send(result);
+    
+      let purchaseHistory = supplier.purchaseHistory || [];
+    
+      // Filter the purchase history if a search term is provided
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        purchaseHistory = purchaseHistory.filter(purchase =>
+          purchase.invoiceNumber.toString().includes(searchTerm) ||
+          purchase.grandTotal.toString().includes(searchTerm) ||
+          purchase.finalPayAmount.toString().includes(searchTerm) ||
+          purchase.dueAmount.toString().includes(searchTerm) ||
+          purchase.date.toLowerCase().includes(searchLower)  
+        );
+      }
+    
+      // Sort the purchase history by invoice number (descending)
+      purchaseHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+    
+      // Pagination logic
+      const totalItems = purchaseHistory.length;
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + parseInt(limit);
+      const paginatedHistory = purchaseHistory.slice(startIndex, endIndex);
+    
+      // Attach the paginated purchase history and metadata to the supplier object
+      supplier.paginatedPurchaseHistory = paginatedHistory;
+      supplier.totalItems = totalItems;
+      supplier.currentPage = parseInt(page);
+      supplier.totalPages = Math.ceil(totalItems / limit);
+    
+      res.send(supplier);
     });
-    // single supplier ledger end ...............................................
-
-    // single customer ledger start ...............................................
+    // GPT end single supplier
+    // GPT start single customer
     app.get('/singleCustomer/:id', async (req, res) => {
       const id = parseInt(req.params.id);
-      const result = await customerDueCollections.findOne({customerSerial:id}); 
-
-      if (result && result.salesHistory) {
-        result.salesHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+      const { searchTerm, page = 1, limit = 10 } = req.query; // Get search term, page, and limit from query parameters
+    
+      const customer = await customerDueCollections.findOne({ customerSerial: id });
+    
+      if (!customer) {
+        return res.status(404).send({ message: 'Customer not found' });
       }
-
-      res.send(result);
+    
+      let salesHistory = customer.salesHistory || [];
+    
+      // Filter the sales history if a search term is provided
+      if (searchTerm) {
+        const searchLower = searchTerm.toLowerCase();
+        salesHistory = salesHistory.filter(sales =>
+          sales.invoiceNumber.toString().includes(searchTerm) ||
+          sales.grandTotal.toString().includes(searchTerm) ||
+          sales.finalPayAmount.toString().includes(searchTerm) ||
+          sales.dueAmount.toString().includes(searchTerm) ||
+          sales.date.toLowerCase().includes(searchLower) 
+        );
+      }
+    
+      // Sort the sales history by invoice number (descending)
+      salesHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+    
+      // Pagination logic
+      const totalItems = salesHistory.length;
+      const startIndex = (page - 1) * limit;
+      const endIndex = startIndex + parseInt(limit);
+      const paginatedHistory = salesHistory.slice(startIndex, endIndex);
+    
+      // Attach the paginated sales history and metadata to the customer object
+      customer.paginatedSalesHistory = paginatedHistory;
+      customer.totalItems = totalItems;
+      customer.currentPage = parseInt(page);
+      customer.totalPages = Math.ceil(totalItems / limit);
+    
+      res.send(customer);
     });
+    // GPT end single customer
+
+    // single customer ledger start ...............................................
+    // app.get('/singleCustomer/:id', async (req, res) => {
+    //   const id = parseInt(req.params.id);
+    //   const result = await customerDueCollections.findOne({customerSerial:id}); 
+
+    //   if (result && result.salesHistory) {
+    //     result.salesHistory.sort((a, b) => b.invoiceNumber - a.invoiceNumber);
+    //   }
+
+    //   res.send(result);
+    // });
     // single customer ledger end ...............................................
 
     // supplier payment start .................................................
@@ -1221,6 +1453,7 @@ async function run() {
                 paidAmount,
                 paymentMethod,
                 payNote,
+                userName
               }
             }
           }
@@ -1319,12 +1552,43 @@ async function run() {
     // customer payment end .................................................
 
     // get invoice list
-    app.get("/invoices", async (req, res) => {
+    app.get("/invoices", verifyToken, async (req, res) => {
+      const page = parseInt(req.query.page);
+      const size = parseInt(req.query.size);
+      const search = req.query.search || '';
+
+      const userMail = req.query['userEmail'];
+      const email = req.user['email'];
+
+      if(userMail !== email) {
+        return res.status(401).send({ message: 'Forbidden Access' });
+      }
+
+      let numericSearch = parseFloat(search);
+      if (isNaN(numericSearch)) {
+        numericSearch = null;
+      }
+
+      const query = search
+    ? {
+        $or: [
+          { date: { $regex: new RegExp(search, 'i') } },
+          { invoiceNumber: numericSearch ? numericSearch : { $exists: false } },
+          { finalPayAmount: numericSearch ? numericSearch : { $exists: false } },
+          { supplierName: { $regex: new RegExp(search, 'i') } },
+          { userName: { $regex: new RegExp(search, 'i') } }
+        ]
+      }
+    : {};
+
       const result = await purchaseInvoiceCollections
-        .find()
+        .find(query)
+        .skip((page - 1) * size)
+        .limit(size)
         .sort({ _id: -1 })
         .toArray();
-      res.send(result);
+        const count = await purchaseInvoiceCollections.countDocuments(query);
+      res.send({result, count});
     });
 
     // get current stock balance
@@ -1493,6 +1757,11 @@ app.get("/singleCustomerCount", async (req, res) => {
 
 // Total sales invoice count
 app.get("/salesInvoiceCount", async (req, res) => {
+  const count = await salesInvoiceCollections.estimatedDocumentCount();
+  res.send({ count });
+});
+// Total sales invoice history count
+app.get("/salesHistoryCount", async (req, res) => {
   const count = await salesInvoiceCollections.estimatedDocumentCount();
   res.send({ count });
 });
