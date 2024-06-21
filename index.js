@@ -8,7 +8,7 @@ require("dotenv").config();
 const app = express();
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://api.mozumdarhat.com"],
+    origin: ["http://localhost:5173", "https://shop.mozumdarhat.com"],
     credentials: true,
   })
 );
@@ -983,7 +983,9 @@ async function run() {
       res.send(result);
     });
 
-    // new quotation invoice...........................................
+    // ................................
+
+    
     app.post("/newQuotation", async (req, res) => {
       const {
         userName,
@@ -995,30 +997,50 @@ async function run() {
         discountAmount,
         grandTotal,
       } = req.body;
+    
+      // Retrieve the latest quotationNumber from the collection
+      const latestQuotation = await quotationCollections.findOne({}, { sort: { quotationNumber: -1 } });
+    
+      let nextQuotationNumber = 1; // Default to 1 if no previous quotation exists
+    
+      if (latestQuotation) {
+        nextQuotationNumber = latestQuotation.quotationNumber + 1;
+      }
+    
+      try {
+        // Retrieve product list from temporary collection
+        const productList = await tempQuotationProductCollections.find().toArray();
+        const filteredProductList = productList.map(({ _id, ...rest }) => rest);
+    
+        const isCustomer = await customerCollections.findOne({
+          serial: customerSerial,
+        });
 
-      // Retrieve product list from temporary collection
-      const productList = await tempQuotationProductCollections
-        .find()
-        .toArray();
-      const filteredProductList = productList.map(({ _id, ...rest }) => rest);
+        // Insert the new quotation
+        const result = await quotationCollections.insertOne({
+          userName,
+          customerSerial,
+          contactNumber,
+          date,
+          customerName,
+          customerAddress: isCustomer.customerAddress,
+          totalAmount,
+          discountAmount,
+          grandTotal,
+          quotationNumber: nextQuotationNumber,
+          productList: filteredProductList,
+        });
+    
+        // Now delete the temporary product list
+        await tempQuotationProductCollections.deleteMany({});
+    
+        res.send(result);
+      } catch (error) {
 
-      // Insert the new sales invoice
-      const result = await quotationCollections.insertOne({
-        userName,
-        customerSerial,
-        contactNumber,
-        date,
-        customerName,
-        totalAmount,
-        discountAmount,
-        grandTotal,
-        productList: filteredProductList,
-      });
-
-      // Now delete the temporary product list
-      await tempQuotationProductCollections.deleteMany({});
-      res.send(result);
+        res.send(result);
+      }
     });
+    
 
     // get sales invoice list
     app.get("/salesInvoices", verifyToken, async (req, res) => {
@@ -1457,6 +1479,8 @@ async function run() {
         return res.status(404).send({ message: "Customer not found" });
       }
 
+     
+
       let salesHistory = customer.salesHistory || [];
 
       // Filter the sales history if a search term is provided
@@ -1607,6 +1631,7 @@ async function run() {
                 paidAmount,
                 paymentMethod,
                 payNote,
+                userName
               },
             },
           }
@@ -1976,6 +2001,25 @@ async function run() {
 
       res.send(result);
     });
+
+    // Generate quotation invoice
+    app.get("/generateQuotationInvoice", verifyToken, async (req, res) => {
+      const finder = req.query.ID;
+
+      const userMail = req.query["userEmail"];
+      const email = req.user["email"];
+
+      if (userMail !== email) {
+        return res.status(401).send({ message: "Forbidden Access" });
+      }
+
+      const result = await quotationCollections.findOne({
+        _id: new ObjectId(finder),
+      });
+
+      res.send(result);
+    });
+
 
     // .................................................................................................................
     console.log(
