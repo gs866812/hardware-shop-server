@@ -8,7 +8,7 @@ require("dotenv").config();
 const app = express();
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://shop.mozumdarhat.com"],
+    origin: ["http://localhost:5173", "https://store.mozumdarhat.com"],
     credentials: true,
   })
 );
