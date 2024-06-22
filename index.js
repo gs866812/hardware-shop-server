@@ -1311,11 +1311,18 @@ async function run() {
 
       // get main balance to deduct purchase amount
       const existingBalance = await mainBalanceCollections.findOne();
-      const updatedMainBalance = existingBalance.mainBalance - finalPayAmount;
-      await mainBalanceCollections.updateOne(
-        {},
-        { $set: { mainBalance: updatedMainBalance } }
-      );
+
+
+      if (existingBalance.mainBalance >= finalPayAmount) {
+        await mainBalanceCollections.updateOne(
+          {},
+          {
+            $inc: { mainBalance: -finalPayAmount },
+          }
+        );
+      } else {
+        return res.json("Insufficient balance");
+      }
 
       // add the transaction in transaction list
       //add transaction list with serial
