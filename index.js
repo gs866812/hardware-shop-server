@@ -1541,7 +1541,7 @@ async function run() {
       const { date, paidAmount, paymentMethod, payNote, userName } = req.body;
 
       const existingBalance = await mainBalanceCollections.findOne();
-      if (existingBalance.mainBalance > paidAmount) {
+      if (existingBalance.mainBalance >= paidAmount) {
         await mainBalanceCollections.updateOne(
           {},
           { $inc: { mainBalance: -paidAmount } }
