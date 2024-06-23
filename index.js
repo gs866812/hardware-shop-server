@@ -92,7 +92,7 @@ async function run() {
 
     // jwt
     app.post("/jwt", async (req, res) => {
-      const user = req.body;
+      const user = req.query.userEmail;
       const token = jwt.sign(user, process.env.TOKEN_SECRET, {
         expiresIn: "1hr",
       });
@@ -106,7 +106,7 @@ async function run() {
     });
 
     app.post("/logOut", async (req, res) => {
-      const user = req.body;
+      const user = req.query.userEmail;
       res.clearCookie("token", { maxAge: 0 }).send({ success: true });
     });
 
