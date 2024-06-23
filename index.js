@@ -92,9 +92,9 @@ async function run() {
 
     // jwt
     app.post("/jwt", async (req, res) => {
-      const user = req.query.userEmail;
+      const user = req.body;
       const token = jwt.sign(user, process.env.TOKEN_SECRET, {
-        expiresIn: "1hr",
+        expiresIn: '1hr',
       });
       res
         .cookie("token", token, {
@@ -106,7 +106,6 @@ async function run() {
     });
 
     app.post("/logOut", async (req, res) => {
-      const user = req.query.userEmail;
       res.clearCookie("token", { maxAge: 0 }).send({ success: true });
     });
 
@@ -546,6 +545,7 @@ async function run() {
     app.get("/mainBalance", verifyToken, async (req, res) => {
       const userMail = req.query["userEmail"];
       const email = req.user["email"];
+
 
       if (userMail !== email) {
         return res.status(401).send({ message: "Forbidden Access" });
