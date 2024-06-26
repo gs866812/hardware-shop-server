@@ -8,7 +8,7 @@ require("dotenv").config();
 const app = express();
 app.use(
   cors({
-    origin: ["http://localhost:5173", "https://store.mozumdarhat.com"],
+    origin: ["http://localhost:5173", "https://app.gsarwar.com", "https://store.mozumdarhat.com"],
     credentials: true,
   })
 );
@@ -94,7 +94,7 @@ async function run() {
     app.post("/jwt", async (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.TOKEN_SECRET, {
-        expiresIn: '1hr',
+        expiresIn: '24hr',
       });
       res
         .cookie("token", token, {
@@ -1207,6 +1207,22 @@ async function run() {
       const isSupplier = await supplierCollections.findOne({
         serial: supplierSerial,
       });
+
+      // get main balance to deduct purchase amount
+      const existingBalance = await mainBalanceCollections.findOne();
+
+
+      if (existingBalance.mainBalance >= finalPayAmount) {
+        await mainBalanceCollections.updateOne(
+          {},
+          {
+            $inc: { mainBalance: -finalPayAmount },
+          }
+        );
+      } else {
+        return res.json("Insufficient balance");
+      };
+
       const result = await purchaseInvoiceCollections.insertOne({
         userName,
         supplierSerial,
@@ -1309,20 +1325,7 @@ async function run() {
 
       stockCollections.bulkWrite(bulkOps);
 
-      // get main balance to deduct purchase amount
-      const existingBalance = await mainBalanceCollections.findOne();
-
-
-      if (existingBalance.mainBalance >= finalPayAmount) {
-        await mainBalanceCollections.updateOne(
-          {},
-          {
-            $inc: { mainBalance: -finalPayAmount },
-          }
-        );
-      } else {
-        return res.json("Insufficient balance");
-      }
+      
 
       // add the transaction in transaction list
       //add transaction list with serial
